@@ -140,6 +140,47 @@ func lockOrigin(s *Skill) (Source, bool) {
 	return Source{Kind: "github", Repo: e.repo}, true
 }
 
+// lockCandidate is lockOrigin without the proof the folder is the one
+// the lock wrote (madeBy): the lock names the skill by name alone, so
+// it may name a folder of another skill's name written since, or one a
+// copy that keeps no stamps has freshened. It is only a candidate, for
+// the caller to put to the user and take in with UpdateSkillFrom (the
+// CLI's --from-lock): an update that asks nothing still refuses, as
+// lockOrigin's strictness means it to. A folder the CLI wrote that
+// another tool has rewritten since, its files all newer than the lock,
+// fails madeBy though the lock is its true record.
+func lockCandidate(s *Skill) (Source, bool) {
+	if s.Source != nil && !within(realDir(s.Source.Dir), realDir(sharedSkillsDir())) {
+		return Source{}, false
+	}
+	tr := &tracer{}
+	e, ok := tr.lock()[s.Name]
+	if !ok || !e.github || e.at.IsZero() {
+		return Source{}, false
+	}
+	return Source{Kind: "github", Repo: e.repo}, true
+}
+
+// SkillLockCandidate is the repository the skills CLI's lock names for
+// a skill the library keeps as one of its own folders', when the
+// folder's stamps no longer prove it: taken in from there only when
+// asked to be (UpdateSkillFrom, the CLI's --from-lock). Not ok when the
+// lock doesn't name it, the skill is already the library's own from
+// GitHub or git, or it is kept from a folder of the user's elsewhere.
+func SkillLockCandidate(name string) (Source, bool) {
+	mu.Lock()
+	l, err := load()
+	mu.Unlock()
+	if err != nil {
+		return Source{}, false
+	}
+	s := l.skill(name)
+	if s == nil || s.Source.remote() {
+		return Source{}, false
+	}
+	return lockCandidate(s)
+}
+
 // madeBy is whether a file in the skill's folder dir was last written by
 // at: a skill the lock's install wrote, edited since or not, keeps the
 // files it didn't edit as they were written. A folder that can't be read

@@ -1791,6 +1791,15 @@ func CreateSkill(name, description string, agents []string) (*Result, error) {
 // an *EditedError unless replace is set, and then the changed version is
 // kept with the backups (#1449).
 func UpdateSkill(name string, replace bool) (*Result, error) {
+	return UpdateSkillFrom(name, replace, nil)
+}
+
+// UpdateSkillFrom is UpdateSkill for one the skills CLI's lock names:
+// from is the lock's say-so (SkillLockCandidate's), taken in when the
+// caller has put it to the user (the CLI's --from-lock). The skill's
+// source becomes the lock's, github, and it updates from there as the
+// library's own from then on (#4645).
+func UpdateSkillFrom(name string, replace bool, from *Source) (*Result, error) {
 	mu.Lock()
 	l, err := load()
 	mu.Unlock()
@@ -1801,7 +1810,7 @@ func UpdateSkill(name string, replace bool) (*Result, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no skill called %s", name)
 	}
-	f := &fetcher{}
+	f := &fetcher{adopt: from}
 	defer f.clean()
 	if edited, _ := l.editState(s, Targets()); edited && !replace {
 		return nil, editedError(s)
@@ -1960,9 +1969,10 @@ func updatable(s *Skill) bool {
 // elsewhere in it is fetched on its own: read from the first folder, it
 // would look removed there (goneFrom).
 type fetcher struct {
-	mu   sync.Mutex
-	got  map[string]*fetched
-	dirs []string
+	mu    sync.Mutex
+	got   map[string]*fetched
+	dirs  []string
+	adopt *Source // the skills CLI's lock's say-so, taken in when asked (--from-lock)
 }
 
 type fetched struct {
@@ -2032,6 +2042,11 @@ func (f *fetcher) prepare(s *Skill) (*skillUpdate, error) {
 			// one the skills CLI installed does too, fetched from where
 			// its lock says it came (#4645)
 			o, ok = lockOrigin(s)
+		}
+		if !ok && f.adopt != nil {
+			// asked for the lock's say-so (--from-lock, SkillLockCandidate's
+			// guards held): the lock names GitHub, the update takes it in
+			o, ok = *f.adopt, true
 		}
 		if !ok {
 			return nil, fmt.Errorf("%s isn't from GitHub or a git repository; it's kept as it is", name)

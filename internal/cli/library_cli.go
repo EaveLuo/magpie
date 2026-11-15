@@ -47,6 +47,8 @@ const libraryUsage = `magpie library                     what the library gives 
   magpie library skill rm --gone [--yes]  every skill an update found removed from its source (asks first; --yes doesn't)
   magpie library skill update [name] fetch a skill from GitHub again; with no name, every one from there
                                      (one changed here is left as it is; update it by name with --replace-edits)
+  magpie library skill update <name> --from-lock   the skills CLI's lock says where a folder skill came from, its stamps say
+                                     nothing any more: taken in from the lock's repository, updated there from then on
   magpie library skill how link|copy [agent]   give skills as links to the library's or as copies: every agent's way, or one agent's
   magpie library skill how default <agent>     the agent goes the library's way again
   magpie library skill where agents|shared     skills go to the agents ticked, or also into ~/.agents/skills for every agent and tool that reads it
@@ -243,12 +245,30 @@ func libraryCmd(args []string) error {
 			res, err = library.UseLibrarySkill(rest[1], rest[2])
 		case len(rest) == 3 && rest[0] == "keep-own":
 			res, err = library.KeepAgentSkill(rest[1], rest[2])
-		case (len(rest) == 2 || len(rest) == 3 && rest[2] == "--replace-edits") && rest[0] == "update" && !strings.HasPrefix(rest[1], "-"):
+		case len(rest) >= 2 && rest[0] == "update" && !strings.HasPrefix(rest[1], "-"):
 			// a skill changed here is updated only when asked to be, its
-			// changed version kept with the backups (#1449)
+			// changed version kept with the backups (#1449); one the
+			// skills CLI's lock names, whose folder's stamps no longer
+			// prove it, is taken in from the lock when --from-lock says so
+			for _, a := range rest[2:] {
+				if a != "--replace-edits" && a != "--from-lock" {
+					return fmt.Errorf("no flag %q\n  %s", a, libraryUsage)
+				}
+			}
+			replace := slices.Contains(rest[2:], "--replace-edits")
+			var from *library.Source
+			if slices.Contains(rest[2:], "--from-lock") {
+				src, ok := library.SkillLockCandidate(rest[1])
+				if !ok {
+					fmt.Println(amber.Render("!"), "the skills CLI's lock doesn't name", rest[1], "as one of its own")
+					return nil
+				}
+				fmt.Println(muted.Render("  its lock says " + src.Repo + ": taken in from there, the library's own from then on"))
+				from = &src
+			}
 			var edited *library.EditedError
 			var gone *library.GoneError
-			if res, err = library.UpdateSkill(rest[1], len(rest) == 3); err == nil {
+			if res, err = library.UpdateSkillFrom(rest[1], replace, from); err == nil {
 				fmt.Println(green.Render("✓"), rest[1], "is up to date")
 			} else if errors.As(err, &edited) {
 				err = fmt.Errorf("%w\n  magpie library skill update %s --replace-edits  takes the fetched one in its place, keeping yours with the backups", err, rest[1])

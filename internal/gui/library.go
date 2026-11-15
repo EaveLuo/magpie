@@ -3,6 +3,7 @@ package gui
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -837,6 +838,14 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
 			res, err = library.CreateSkill(in.Name, in.Description, in.Agents)
 		case "skills/update":
 			res, err = library.UpdateSkill(in.Name, in.Replace)
+		case "skills/update-from-lock":
+			// the skills CLI's lock names it, its folder's stamps no longer
+			// prove it: the page asks first, this takes the lock's word
+			if src, ok := library.SkillLockCandidate(in.Name); ok {
+				res, err = library.UpdateSkillFrom(in.Name, in.Replace, &src)
+			} else {
+				res, err = nil, fmt.Errorf("the skills CLI's lock doesn't name %s as one of its own", in.Name)
+			}
 			var gone *library.GoneError
 			if errors.As(err, &gone) {
 				// removed from its source: the page shows it so, not a failure

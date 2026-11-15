@@ -552,6 +552,55 @@ func TestSkillLockOriginStale(t *testing.T) {
 	if _, err := UpdateSkill("undated", false); err == nil || !strings.Contains(err.Error(), "isn't from GitHub or a git repository") {
 		t.Errorf("a lock without a time: %v, want isn't from GitHub or a git repository", err)
 	}
+	if _, ok := SkillLockCandidate("undated"); ok {
+		t.Errorf("a lock without a time: taken as a candidate")
+	}
+}
+
+// A folder the skills CLI wrote that something has rewritten since: its
+// files are all newer than the lock, so lockOrigin's proof fails and a
+// plain update refuses (#4645's madeBy). The lock still names the
+// repository, so --from-lock takes it in from there, and the skill is
+// the library's own from then on.
+func TestSkillLockOriginRewrittenFolder(t *testing.T) {
+	h := sandbox(t)
+	noGoose(t, h)
+	pack := map[string]string{
+		"skills/grill-me/SKILL.md": "---\nname: grill-me\ndescription: Theirs, newer\n---\nnew\n",
+	}
+	tar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.URL.Path, "/tar/") != "other/skills" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(tarball(t, pack))
+	}))
+	t.Cleanup(tar.Close)
+	oldT := tarballURL
+	tarballURL = func(repo, ref string) string { return tar.URL + "/tar/" + repo }
+	t.Cleanup(func() { tarballURL = oldT })
+
+	skill(t, filepath.Join(h, ".agents/skills/grill-me"), "grill-me", "mine, made today")
+	write(t, filepath.Join(h, ".agents/.skill-lock.json"), `{"version":3,"skills":{
+		"grill-me":{"source":"other/skills","sourceType":"github","updatedAt":"2020-01-01T00:00:00Z"}}}`)
+	ok(t)(ImportSkills([]string{"grill-me"}))
+	if _, err := UpdateSkill("grill-me", false); err == nil || !strings.Contains(err.Error(), "isn't from GitHub or a git repository") {
+		t.Errorf("a folder rewritten since the lock: %v, want isn't from GitHub or a git repository", err)
+	}
+	src, ok := SkillLockCandidate("grill-me")
+	if !ok || src.Kind != "github" || src.Repo != "other/skills" {
+		t.Fatalf("candidate: %+v %v, want other/skills", src, ok)
+	}
+	if _, err := UpdateSkillFrom("grill-me", false, &src); err != nil {
+		t.Fatal(err)
+	}
+	s := mustLoad(t).skill("grill-me")
+	if s.Source == nil || s.Source.Kind != "github" || s.Source.Repo != "other/skills" || s.Source.Path == "" {
+		t.Errorf("after taking it in: source %+v, want other/skills with its path", s.Source)
+	}
+	if b, err := os.ReadFile(filepath.Join(skillDir("grill-me"), "SKILL.md")); err != nil || !strings.Contains(string(b), "new") {
+		t.Errorf("after: %q %v, want the repository's", b, err)
+	}
 }
 
 // A skill installed from a folder of the user's own is theirs, whatever a
